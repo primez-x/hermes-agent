@@ -116,3 +116,43 @@ def test_json_serializable(isolated_home):
     data = compute_prompt_breakdown("cli")
     # Round-trips cleanly for ``--json`` output.
     assert json.loads(json.dumps(data)) == json.loads(json.dumps(data))
+
+
+def test_prompt_size_uses_saved_platform_toolsets(isolated_home):
+    (isolated_home / "config.yaml").write_text(
+        "model:\n"
+        "  default: glm-5.2\n"
+        "agent:\n"
+        "  compact_system_prompt: true\n"
+        "platform_toolsets:\n"
+        "  telegram:\n"
+        "    - terminal\n",
+        encoding="utf-8",
+    )
+
+    data = compute_prompt_breakdown("telegram")
+
+    assert data["tools"]["count"] == 2
+
+
+def test_compact_prompt_size_does_not_attribute_uninjected_memory(isolated_home):
+    _seed_memory(
+        isolated_home,
+        memory_text="Remember this should stay out of compact prompt.\n",
+        user_text="User profile should stay out too.\n",
+    )
+    (isolated_home / "config.yaml").write_text(
+        "model:\n"
+        "  default: glm-5.2\n"
+        "agent:\n"
+        "  compact_system_prompt: true\n"
+        "platform_toolsets:\n"
+        "  telegram:\n"
+        "    - terminal\n",
+        encoding="utf-8",
+    )
+
+    data = compute_prompt_breakdown("telegram")
+
+    assert data["memory"]["bytes"] == 0
+    assert data["user_profile"]["bytes"] == 0

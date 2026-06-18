@@ -569,6 +569,22 @@ def _is_minimax_anthropic_endpoint(base_url: str | None) -> bool:
     )
 
 
+def _is_zai_anthropic_endpoint(base_url: str | None) -> bool:
+    """Return True for Z.AI/BigModel Anthropic-compatible endpoints.
+
+    Z.AI returns provider rate-limit/overload errors when Anthropic beta
+    headers are present on its Claude-compatible route, so these endpoints
+    need stricter beta suppression than MiniMax.
+    """
+    normalized = _normalize_base_url_text(base_url)
+    if not normalized:
+        return False
+    parsed = urlparse(normalized)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    path = (parsed.path or "").lower()
+    return host in {"api.z.ai", "open.bigmodel.cn"} and "/anthropic" in path
+
+
 def _is_azure_anthropic_endpoint(base_url: str | None) -> bool:
     """Return True for Azure-hosted Anthropic Messages endpoints.
 
@@ -602,8 +618,11 @@ def _common_betas_for_base_url(
     MiniMax's Anthropic-compatible endpoints (Bearer-auth) reject requests
     that include Anthropic's ``fine-grained-tool-streaming`` beta — every
     tool-use message triggers a connection error. They also reject the
-    1M-context beta. Azure AI Foundry's Anthropic endpoint also uses
-    Bearer auth but keeps both betas (it needs the 1M beta for 1M context).
+    1M-context beta. Z.AI's Anthropic-compatible endpoints return provider
+    rate-limit/overload errors when any common Anthropic beta is present, so
+    they receive no common beta headers. Azure AI Foundry's Anthropic endpoint
+    also uses Bearer auth but keeps both betas (it needs the 1M beta for 1M
+    context).
 
     The ``context-1m-2025-08-07`` beta is not sent to native Anthropic by
     default because some subscriptions reject it. Add it only for endpoint
@@ -616,6 +635,8 @@ def _common_betas_for_base_url(
     betas = list(_COMMON_BETAS)
     if _base_url_needs_context_1m_beta(base_url) and not drop_context_1m_beta:
         betas.append(_CONTEXT_1M_BETA)
+    if _is_zai_anthropic_endpoint(base_url):
+        return []
     if _is_minimax_anthropic_endpoint(base_url):
         _stripped = {_TOOL_STREAMING_BETA, _CONTEXT_1M_BETA}
         return [b for b in betas if b not in _stripped]

@@ -269,6 +269,15 @@ class TestMinimaxBetaHeaders:
         betas = _common_betas_for_base_url("https://api.minimaxi.com/anthropic")
         assert _TOOL_STREAMING_BETA not in betas
 
+    def test_common_betas_zai_url_omits_all_common_betas(self):
+        from agent.anthropic_adapter import _common_betas_for_base_url
+        assert _common_betas_for_base_url("https://api.z.ai/api/anthropic") == []
+        assert _common_betas_for_base_url("https://api.z.ai/api/anthropic/") == []
+
+    def test_common_betas_bigmodel_url_omits_all_common_betas(self):
+        from agent.anthropic_adapter import _common_betas_for_base_url
+        assert _common_betas_for_base_url("https://open.bigmodel.cn/api/anthropic") == []
+
     def test_common_betas_regular_url(self):
         from agent.anthropic_adapter import _common_betas_for_base_url, _COMMON_BETAS
         assert _common_betas_for_base_url("https://api.anthropic.com") == _COMMON_BETAS

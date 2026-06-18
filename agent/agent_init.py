@@ -1223,6 +1223,12 @@ def init_agent(
     # targets.
     agent._task_completion_guidance = bool(_agent_section.get("task_completion_guidance", True))
 
+    # Compact system prompt toggle. Default False. When True, the prompt
+    # builder keeps only the configured identity prompt plus the stable
+    # timestamp/model/provider line, leaving tools like memory/session_search
+    # available on demand without injecting their prompt blocks.
+    agent._compact_system_prompt = bool(_agent_section.get("compact_system_prompt", False))
+
     # Local Python toolchain probe toggle.  Default True.  When False,
     # the probe is skipped entirely (no subprocess calls, no system-prompt
     # line).  Useful for users on exotic setups where the probe heuristics

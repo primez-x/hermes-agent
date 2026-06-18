@@ -83,6 +83,33 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     # we resolve through ``_ra()`` to honor those patches.
     _r = _ra()
 
+    if getattr(agent, "_compact_system_prompt", False):
+        identity_parts: List[str] = []
+        if agent.load_soul_identity or not agent.skip_context_files:
+            _soul_content = _r.load_soul_md()
+            if _soul_content:
+                identity_parts.append(_soul_content)
+        if system_message is not None:
+            identity_parts.append(system_message)
+        if not identity_parts:
+            identity_parts.append(DEFAULT_AGENT_IDENTITY)
+
+        from hermes_time import now as _hermes_now
+        now = _hermes_now()
+        timestamp_line = f"Conversation started: {now.strftime('%A, %B %d, %Y')}"
+        if agent.pass_session_id and agent.session_id:
+            timestamp_line += f"\nSession ID: {agent.session_id}"
+        if agent.model:
+            timestamp_line += f"\nModel: {agent.model}"
+        if agent.provider:
+            timestamp_line += f"\nProvider: {agent.provider}"
+
+        return {
+            "stable": "\n\n".join(p.strip() for p in identity_parts if p and p.strip()),
+            "context": "",
+            "volatile": timestamp_line,
+        }
+
     # ── Stable tier ────────────────────────────────────────────────
     stable_parts: List[str] = []
 
