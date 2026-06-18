@@ -92,3 +92,31 @@ def test_persist_session_strips_marked_terminal_empty_sentinel():
     assert messages == [{"role": "user", "content": "continue"}]
     assert agent.flushed_session_db_messages[-1] == messages
     assert all(not msg.get("_empty_terminal_sentinel") for msg in messages)
+
+
+def test_invalid_response_cleanup_marks_trailing_tool_tail_for_rewind():
+    agent = _agent_with_stubbed_persistence()
+    messages = [
+        {"role": "user", "content": "run the task"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "browser_vision", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "content": "vision result", "tool_call_id": "call_1"},
+    ]
+
+    marked = AIAgent._mark_trailing_tool_tail_for_failure_cleanup(
+        agent, messages, reason="invalid_response"
+    )
+    AIAgent._persist_session(agent, messages, conversation_history=[])
+
+    assert marked is True
+    assert messages == [{"role": "user", "content": "run the task"}]
+    assert agent.flushed_session_db_messages[-1] == messages

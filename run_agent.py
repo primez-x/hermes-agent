@@ -1494,6 +1494,45 @@ class AIAgent:
         self._save_session_log(messages)
         self._flush_messages_to_session_db(messages, conversation_history)
 
+    def _mark_trailing_tool_tail_for_failure_cleanup(
+        self, messages: List[Dict], *, reason: str = "failed_response"
+    ) -> bool:
+        """Mark a failed turn tail so persistence rewinds orphan tool results.
+
+        Provider failures after tool execution leave the live transcript ending
+        in ``assistant(tool_calls)+tool`` with no final assistant response. If
+        persisted as-is, the next resumed turn replays that protocol-fragile
+        tail and can fail forever. Reuse the private terminal sentinel consumed
+        by ``_drop_trailing_empty_response_scaffolding`` so all tail cleanup
+        stays centralized in ``_persist_session``.
+        """
+        if not messages:
+            return False
+        tail = messages[-1]
+        if not isinstance(tail, dict):
+            return False
+        tail_is_tool_result = tail.get("role") == "tool"
+        tail_is_unanswered_tool_call = (
+            tail.get("role") == "assistant"
+            and bool(tail.get("tool_calls"))
+        )
+        if not (tail_is_tool_result or tail_is_unanswered_tool_call):
+            return False
+
+        messages.append({
+            "role": "assistant",
+            "content": "(empty)",
+            "_empty_terminal_sentinel": True,
+            "_failure_cleanup_synthetic": True,
+            "_failure_cleanup_reason": str(reason or "failed_response"),
+        })
+        logger.warning(
+            "%sMarking trailing tool tail for cleanup after %s",
+            getattr(self, "log_prefix", ""),
+            reason or "failed_response",
+        )
+        return True
+
     def _drop_trailing_empty_response_scaffolding(self, messages: List[Dict]) -> None:
         """Remove private empty-response retry/failure scaffolding from transcript tails.
 

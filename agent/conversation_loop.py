@@ -1340,6 +1340,9 @@ def run_conversation(
                         agent._flush_status_buffer()
                         agent._emit_status(f"❌ Max retries ({max_retries}) exceeded for invalid responses. Giving up.")
                         logger.error(f"{agent.log_prefix}Invalid API response after {max_retries} retries.")
+                        agent._mark_trailing_tool_tail_for_failure_cleanup(
+                            messages, reason="invalid_response"
+                        )
                         agent._persist_session(messages, conversation_history)
                         return {
                             "messages": messages,
@@ -1360,6 +1363,9 @@ def run_conversation(
                     while time.time() < sleep_end:
                         if agent._interrupt_requested:
                             agent._vprint(f"{agent.log_prefix}⚡ Interrupt detected during retry wait, aborting.", force=True)
+                            agent._mark_trailing_tool_tail_for_failure_cleanup(
+                                messages, reason="invalid_response_interrupt"
+                            )
                             agent._persist_session(messages, conversation_history)
                             agent.clear_interrupt()
                             return {
