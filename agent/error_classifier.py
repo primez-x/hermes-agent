@@ -436,6 +436,8 @@ _SSL_TRANSIENT_PATTERNS = [
 ]
 
 
+_ZAI_OVERLOAD_COMPRESS_MIN_TOKENS = 60_000
+
 # ── Classification pipeline ─────────────────────────────────────────────
 
 def classify_api_error(
@@ -665,6 +667,38 @@ def classify_api_error(
             FailoverReason.auth,
             retryable=False,
             should_fallback=True,
+        )
+
+    # Z.AI / BigModel often reports large agent replays as overload/rate-limit
+    # code 1305 even when account usage is low. Retrying the exact same 60K+
+    # prompt just burns attempts; compaction changes the payload shape and is
+    # the recovery Hermes can perform locally. Keep smaller prompts as normal
+    # overloads so genuine transient provider pressure still gets backoff.
+    is_zai_provider = provider_lower in {"zai", "z.ai", "bigmodel", "glm"}
+    is_zai_overload_1305 = (
+        is_zai_provider
+        and (
+            error_code == "1305"
+            or "[1305]" in error_msg
+            or "code': '1305'" in error_msg
+            or 'code": "1305"' in error_msg
+        )
+        and (
+            "overloaded" in error_msg
+            or "temporarily overloaded" in error_msg
+            or "try again later" in error_msg
+        )
+    )
+    if is_zai_overload_1305:
+        if approx_tokens >= _ZAI_OVERLOAD_COMPRESS_MIN_TOKENS:
+            return _result(
+                FailoverReason.context_overflow,
+                retryable=True,
+                should_compress=True,
+            )
+        return _result(
+            FailoverReason.overloaded,
+            retryable=True,
         )
 
     # ── 2. HTTP status code classification ──────────────────────────

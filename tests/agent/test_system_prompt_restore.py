@@ -31,6 +31,7 @@ def _make_agent(session_db=None, prebuilt_prompt: str = "BUILT_PROMPT"):
     agent.model = "test-model"
     agent.provider = "openrouter"
     agent.platform = "cli"
+    agent._compact_system_prompt = False
     agent._session_db = session_db
     agent._build_system_prompt = MagicMock(return_value=prebuilt_prompt)
     return agent
@@ -108,6 +109,56 @@ class TestStoredPromptReuse:
             agent.session_id, agent._cached_system_prompt
         )
         assert any("stale runtime identity" in r.getMessage() for r in caplog.records)
+
+
+
+    def test_compact_mode_rejects_legacy_full_prompt_snapshot(self, caplog):
+        """Compact dispatcher mode must not replay old full-prompt snapshots."""
+        stored = (
+            "# Hermes Agent Persona\n\n"
+            "<available_skills>old bulky skill index</available_skills>\n\n"
+            "# Project Context\nAGENTS.md contents\n\n"
+            "Model: test-model\n"
+            "Provider: openrouter"
+        )
+        rebuilt = (
+            "# Hermes Dispatcher\n\n"
+            "Prompt Mode: compact\n"
+            "Conversation started: Wednesday, June 17, 2026\n"
+            "Model: test-model\n"
+            "Provider: openrouter"
+        )
+        db = MagicMock()
+        db.get_session.return_value = {"system_prompt": stored}
+        agent = _make_agent(session_db=db, prebuilt_prompt=rebuilt)
+        agent._compact_system_prompt = True
+
+        with caplog.at_level(logging.INFO, logger="agent.conversation_loop"):
+            _restore_or_build_system_prompt(agent, None, [{"role": "user", "content": "continue"}])
+
+        assert agent._cached_system_prompt == rebuilt
+        agent._build_system_prompt.assert_called_once_with(None)
+        db.update_system_prompt.assert_called_once_with(agent.session_id, rebuilt)
+        assert any("stale runtime identity" in r.getMessage() for r in caplog.records)
+
+    def test_compact_mode_reuses_marked_compact_snapshot(self):
+        stored = (
+            "# Hermes Dispatcher\n\n"
+            "Prompt Mode: compact\n"
+            "Conversation started: Wednesday, June 17, 2026\n"
+            "Model: test-model\n"
+            "Provider: openrouter"
+        )
+        db = MagicMock()
+        db.get_session.return_value = {"system_prompt": stored}
+        agent = _make_agent(session_db=db)
+        agent._compact_system_prompt = True
+
+        _restore_or_build_system_prompt(agent, None, [{"role": "user", "content": "continue"}])
+
+        assert agent._cached_system_prompt == stored
+        agent._build_system_prompt.assert_not_called()
+        db.update_system_prompt.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

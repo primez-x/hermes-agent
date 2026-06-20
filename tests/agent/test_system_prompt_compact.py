@@ -20,7 +20,7 @@ def test_compact_system_prompt_omits_default_bloat():
 
     prompt = build_system_prompt(agent)
 
-    assert "# Hermes Dispatcher" in prompt
+    assert "Prompt Mode: compact" in prompt
     assert "Conversation started:" in prompt
     assert "<available_skills>" not in prompt
     assert "# Project Context" not in prompt

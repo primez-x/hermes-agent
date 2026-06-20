@@ -28,6 +28,7 @@ Usage:
     )
 """
 
+import asyncio
 import base64
 import json
 import logging
@@ -285,6 +286,75 @@ def _determine_mime_type(image_path: Path) -> str:
     }
     return mime_types.get(extension, 'image/jpeg')
 
+
+
+_ZAI_MCP_VISION_PROVIDERS = {"zai-mcp", "zai_mcp", "zai-vision-mcp", "zai_vision_mcp"}
+_ZAI_MCP_ANALYZE_IMAGE_TOOL = "mcp_zai_vision_analyze_image"
+
+
+def _is_zai_mcp_vision_provider(provider: Any) -> bool:
+    return str(provider or "").strip().lower() in _ZAI_MCP_VISION_PROVIDERS
+
+
+def _resolve_vision_runtime_settings() -> tuple[str, float, float]:
+    """Return configured auxiliary vision provider, timeout, and temperature."""
+    vision_provider = ""
+    vision_timeout = 120.0
+    vision_temperature = 0.1
+    try:
+        from hermes_cli.config import cfg_get, load_config
+        _cfg = load_config()
+        _vision_cfg = cfg_get(_cfg, "auxiliary", "vision", default={}) or {}
+        vision_provider = str(_vision_cfg.get("provider") or "")
+        _vt = _vision_cfg.get("timeout")
+        if _vt is not None:
+            vision_timeout = float(_vt)
+        _vtemp = _vision_cfg.get("temperature")
+        if _vtemp is not None:
+            vision_temperature = float(_vtemp)
+    except Exception:
+        pass
+    return vision_provider, vision_timeout, vision_temperature
+
+
+async def _analyze_image_with_zai_mcp(
+    image_path: Path,
+    prompt: str,
+    timeout: float,
+) -> str:
+    """Analyze an image through Z.AI's Coding Plan Vision MCP server."""
+    from tools.mcp_tool import discover_mcp_tools
+    from tools.registry import registry
+
+    # Discovery may spawn/connect stdio MCP servers, so keep it off the event loop.
+    await asyncio.to_thread(discover_mcp_tools)
+    entry = registry.get_entry(_ZAI_MCP_ANALYZE_IMAGE_TOOL)
+    if entry is None:
+        raise RuntimeError(
+            "Z.AI Vision MCP tool is not registered. Configure "
+            "mcp_servers.zai-vision with the analyze_image tool enabled."
+        )
+
+    args = {"image_source": str(image_path), "prompt": prompt}
+    result_text = await asyncio.wait_for(
+        asyncio.to_thread(entry.handler, args),
+        timeout=max(float(timeout or 120.0), 1.0),
+    )
+    try:
+        parsed = json.loads(result_text)
+    except Exception as exc:
+        raise RuntimeError(f"Z.AI Vision MCP returned non-JSON output: {result_text[:300]}") from exc
+
+    if isinstance(parsed, dict) and parsed.get("error"):
+        raise RuntimeError(f"Z.AI Vision MCP error: {parsed.get('error')}")
+
+    analysis = parsed.get("result") if isinstance(parsed, dict) else parsed
+    if isinstance(analysis, (dict, list)):
+        analysis = json.dumps(analysis, ensure_ascii=False)
+    analysis = str(analysis or "").strip()
+    if not analysis:
+        raise RuntimeError("Z.AI Vision MCP returned an empty analysis")
+    return analysis
 
 def _image_to_base64_data_url(image_path: Path, mime_type: Optional[str] = None) -> str:
     """
@@ -899,6 +969,28 @@ async def vision_analyze_tool(
         if not detected_mime_type:
             raise ValueError("Only real image files are supported for vision analysis.")
         
+        # Use the prompt as provided (model_tools.py now handles full description formatting)
+        comprehensive_prompt = user_prompt
+        vision_provider, vision_timeout, vision_temperature = _resolve_vision_runtime_settings()
+
+        if _is_zai_mcp_vision_provider(vision_provider):
+            logger.info("Processing image with Z.AI Vision MCP server...")
+            analysis = await _analyze_image_with_zai_mcp(
+                temp_image_path, comprehensive_prompt, vision_timeout
+            )
+            analysis_length = len(analysis)
+            logger.info("Z.AI Vision MCP analysis completed (%s characters)", analysis_length)
+            result = {
+                "success": True,
+                "analysis": analysis,
+            }
+            debug_call_data["success"] = True
+            debug_call_data["analysis_length"] = analysis_length
+            debug_call_data["model_used"] = "zai-mcp"
+            _debug.log_call("vision_analyze_tool", debug_call_data)
+            _debug.save()
+            return json.dumps(result, indent=2, ensure_ascii=False)
+
         # Convert image to base64 — send at full resolution first.
         # If the provider rejects it as too large, we auto-resize and retry.
         logger.info("Converting image to base64...")

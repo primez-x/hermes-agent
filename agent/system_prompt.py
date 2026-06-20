@@ -96,7 +96,10 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
 
         from hermes_time import now as _hermes_now
         now = _hermes_now()
-        timestamp_line = f"Conversation started: {now.strftime('%A, %B %d, %Y')}"
+        # Stable mode marker used by session resume to invalidate pre-compact
+        # prompt snapshots without diffing the whole prompt body.
+        timestamp_line = "Prompt Mode: compact"
+        timestamp_line += f"\nConversation started: {now.strftime('%A, %B %d, %Y')}"
         if agent.pass_session_id and agent.session_id:
             timestamp_line += f"\nSession ID: {agent.session_id}"
         if agent.model:

@@ -1809,6 +1809,19 @@ DEFAULT_CONFIG = {
         "subagent_auto_approve": False,
     },
 
+    # Native claude-glm dispatch — Hermes stays responsive while coding work
+    # runs in a tracked child process. max_turns="auto" chooses a tier from
+    # the curated prompt/workdir; numeric values remain allowed and are
+    # clamped by hard_max_turns.
+    "claude_glm_dispatch": {
+        "max_turns": "auto",
+        "quick_max_turns": 40,
+        "small_max_turns": 70,
+        "normal_max_turns": 100,
+        "complex_max_turns": 150,
+        "hard_max_turns": 200,
+    },
+
     # Ephemeral prefill messages file — JSON list of {role, content} dicts
     # injected at the start of every API call for few-shot priming.
     # Never saved to sessions, logs, or trajectories.
@@ -4138,6 +4151,7 @@ _KNOWN_ROOT_KEYS = {
     "_config_version", "model", "providers", "fallback_model",
     "fallback_providers", "credential_pool_strategies", "toolsets",
     "agent", "terminal", "display", "compression", "delegation",
+    "claude_glm_dispatch", "goals", "skills",
     "auxiliary", "custom_providers", "context", "memory", "gateway",
     "sessions", "streaming", "updates", "mcp_servers",
 }

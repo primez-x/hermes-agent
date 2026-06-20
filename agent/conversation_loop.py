@@ -376,7 +376,7 @@ def _restore_or_build_system_prompt(agent, system_message, conversation_history)
 
 
 def _stored_prompt_matches_runtime(agent, prompt: str) -> bool:
-    """Return False when the persisted Model/Provider lines are stale."""
+    """Return False when the persisted prompt no longer matches runtime config."""
 
     def line_value(label: str) -> str:
         prefix = f"{label}:"
@@ -385,6 +385,30 @@ def _stored_prompt_matches_runtime(agent, prompt: str) -> bool:
             if line.startswith(prefix):
                 value = line[len(prefix):].strip()
         return value
+
+    compact_mode = bool(getattr(agent, "_compact_system_prompt", False))
+    has_compact_marker = line_value("Prompt Mode") == "compact"
+    if compact_mode:
+        # Older gateway sessions stored the full Hermes prompt for prefix-cache
+        # stability. After switching a profile into compact dispatcher mode,
+        # blindly reusing that snapshot keeps replaying the old persona,
+        # skills index, and project context forever on /resume. Rebuild once
+        # when the stored prompt is from the old shape.
+        if not has_compact_marker:
+            return False
+        stale_full_prompt_markers = (
+            "<available_skills>",
+            "# Project Context",
+            "# Hermes Agent Persona",
+            "## Tool Use Enforcement",
+            "AGENTS.md",
+        )
+        if any(marker in prompt for marker in stale_full_prompt_markers):
+            return False
+    elif has_compact_marker:
+        # The user turned compact mode off; do not keep a compact snapshot
+        # around just because model/provider still match.
+        return False
 
     stored_model = line_value("Model")
     current_model = str(getattr(agent, "model", "") or "").strip()

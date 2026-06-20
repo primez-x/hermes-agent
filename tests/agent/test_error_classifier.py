@@ -302,6 +302,37 @@ class TestClassifyApiError:
 
     # ── Rate limit ──
 
+    def test_zai_1305_large_prompt_triggers_context_compression(self):
+        e = MockAPIError(
+            "HTTP 200: [1305][The service may be temporarily overloaded, please try again later]",
+            status_code=200,
+            body={
+                "type": "error",
+                "error": {
+                    "type": "overloaded_error",
+                    "code": "1305",
+                    "message": "[1305][The service may be temporarily overloaded, please try again later]",
+                },
+            },
+        )
+
+        result = classify_api_error(e, provider="zai", approx_tokens=105_000)
+
+        assert result.reason == FailoverReason.context_overflow
+        assert result.should_compress is True
+
+    def test_zai_1305_small_prompt_stays_transient_overload(self):
+        e = MockAPIError(
+            "The service may be temporarily overloaded, please try again later",
+            status_code=429,
+            body={"error": {"code": "1305", "message": "The service may be temporarily overloaded, please try again later"}},
+        )
+
+        result = classify_api_error(e, provider="zai", approx_tokens=8_000)
+
+        assert result.reason == FailoverReason.overloaded
+        assert result.should_compress is False
+
     def test_429_rate_limit(self):
         e = MockAPIError("Too Many Requests", status_code=429)
         result = classify_api_error(e)
