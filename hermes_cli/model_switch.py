@@ -54,6 +54,8 @@ from utils import base_url_host_matches, base_url_hostname
 # be visible so users can pick any model they have access to.
 _UNCAPPED_PICKER_PROVIDERS: frozenset[str] = frozenset({"opencode-zen", "opencode-go"})
 
+_PICKER_ALLOWLIST_UNSET = object()
+
 logger = logging.getLogger(__name__)
 
 
@@ -103,6 +105,80 @@ def _declared_model_ids(value: Any) -> list[str]:
         return ids
 
     return ids
+
+
+def _load_picker_allowlist() -> dict | None:
+    """Load the optional provider/model picker allowlist from config.
+
+    None means the setting is omitted and preserves upstream behavior.
+    An explicit mapping, including {}, is treated as an allowlist and
+    therefore fails closed for providers/models not named in it.
+    """
+    try:
+        from hermes_cli.config import load_config
+
+        catalog = (load_config() or {}).get("model_catalog")
+        if not isinstance(catalog, dict) or "picker_allowlist" not in catalog:
+            return None
+        value = catalog.get("picker_allowlist")
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return None
+
+
+def _apply_picker_allowlist(
+    rows: list[dict],
+    picker_allowlist: dict | None,
+) -> list[dict]:
+    """Filter picker rows by exact, case-insensitive provider/model IDs."""
+    if picker_allowlist is None:
+        return rows
+
+    provider_models: dict[str, set[str]] = {}
+    for provider, models in picker_allowlist.items():
+        provider_key = str(provider or "").strip().lower()
+        if not provider_key:
+            continue
+        if isinstance(models, str):
+            models = [models]
+        if not isinstance(models, (list, tuple, set)):
+            models = []
+        provider_models[provider_key] = {
+            str(model).strip().lower()
+            for model in models
+            if str(model).strip()
+        }
+
+    filtered: list[dict] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        aliases = {
+            str(row.get("slug") or "").strip().lower(),
+            str(row.get("provider_id") or "").strip().lower(),
+        }
+        aliases.discard("")
+        if row.get("is_user_defined"):
+            for alias in tuple(aliases):
+                aliases.add(custom_provider_slug(alias))
+                if alias.startswith("custom:"):
+                    aliases.add(alias.split(":", 1)[1])
+        allowed_models: set[str] = set()
+        for alias in aliases:
+            if alias in provider_models:
+                allowed_models = provider_models[alias]
+                break
+        visible_models = [
+            model for model in (row.get("models") or [])
+            if str(model).strip().lower() in allowed_models
+        ]
+        if not visible_models:
+            continue
+        visible = dict(row)
+        visible["models"] = visible_models
+        visible["total_models"] = len(visible_models)
+        filtered.append(visible)
+    return filtered
 
 
 def _models_config_is_allowlist(value: Any) -> bool:
@@ -2326,6 +2402,7 @@ def list_authenticated_providers(
     probe_current_custom_provider: bool = False,
     for_picker: bool = False,
     excluded_providers: list | None = None,
+    picker_allowlist: dict | None | object = _PICKER_ALLOWLIST_UNSET,
 ) -> List[dict]:
     """Detect which providers have credentials and list their curated models.
 
@@ -2391,6 +2468,14 @@ def list_authenticated_providers(
     seen_slugs: set = set()  # lowercase-normalized to catch case variants (#9545)
     _current_provider_norm = str(current_provider or "").strip().lower()
     _current_base_url_norm = str(current_base_url or "").strip().rstrip("/").lower()
+    _effective_picker_allowlist = (
+        None if picker_allowlist is _PICKER_ALLOWLIST_UNSET else picker_allowlist
+    )
+    if _effective_picker_allowlist is not None:
+        max_models = None
+    # Keep the complete source catalogs available until the allowlist has
+    # selected the requested IDs; otherwise max_models could truncate an
+    # allowed model before this policy runs.
 
     def _can_probe_custom_provider(*, row_is_current: bool) -> bool:
         return bool(probe_custom_providers or (probe_current_custom_provider and row_is_current))
@@ -3557,6 +3642,8 @@ def list_authenticated_providers(
                 _row["total_models"] = _row.get("total_models", len(_models)) + 1
             break
 
+    results = _apply_picker_allowlist(results, _effective_picker_allowlist)
+
     # Sort: current provider first, then by model count descending
     results.sort(key=lambda r: (not r["is_current"], -r["total_models"]))
 
@@ -3614,6 +3701,7 @@ def list_picker_providers(
     """
     from hermes_cli.models import fetch_openrouter_models
 
+    _effective_picker_allowlist = _load_picker_allowlist()
     providers = list_authenticated_providers(
         current_provider=current_provider,
         current_base_url=current_base_url,
@@ -3623,6 +3711,7 @@ def list_picker_providers(
         current_model=current_model,
         for_picker=True,
         excluded_providers=excluded_providers,
+        picker_allowlist=_effective_picker_allowlist,
     )
     if include_moa:
         providers = _prepend_moa_picker_provider(providers, current_provider=current_provider)
@@ -3646,4 +3735,4 @@ def list_picker_providers(
             continue
         filtered.append(p)
 
-    return filtered
+    return _apply_picker_allowlist(filtered, _effective_picker_allowlist)

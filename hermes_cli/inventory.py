@@ -53,6 +53,7 @@ class ConfigContext:
     user_providers: dict
     custom_providers: list
     excluded_providers: list = None
+    picker_allowlist: dict | None = None
 
     def with_overrides(
         self,
@@ -97,7 +98,18 @@ def load_picker_context() -> ConfigContext:
         current_provider = ""
         current_base_url = ""
     raw = cfg.get("providers")
-    excluded = cfg.get("model_catalog", {}).get("excluded_providers") or []
+    model_catalog = cfg.get("model_catalog")
+    excluded = model_catalog.get("excluded_providers") if isinstance(model_catalog, dict) else []
+    raw_allowlist = (
+        model_catalog.get("picker_allowlist")
+        if isinstance(model_catalog, dict)
+        else None
+    )
+    picker_allowlist = (
+        raw_allowlist
+        if isinstance(raw_allowlist, dict)
+        else ({} if raw_allowlist is not None else None)
+    )
     return ConfigContext(
         current_provider=current_provider,
         current_model=current_model,
@@ -105,6 +117,7 @@ def load_picker_context() -> ConfigContext:
         user_providers=raw if isinstance(raw, dict) else {},
         custom_providers=get_compatible_custom_providers(cfg),
         excluded_providers=excluded if isinstance(excluded, list) else [],
+        picker_allowlist=picker_allowlist,
     )
 
 
@@ -198,6 +211,7 @@ def build_models_payload(
         probe_current_custom_provider=probe_current_custom_provider,
         for_picker=for_picker,
         excluded_providers=ctx.excluded_providers or [],
+        picker_allowlist=ctx.picker_allowlist,
     )
 
     moa_row = _moa_provider_row(ctx.current_provider)
@@ -272,6 +286,11 @@ def build_models_payload(
         _apply_capabilities(rows)
     if featured:
         _apply_featured(rows)
+
+    # Reapply after MoA, unconfigured-row, deduplication, and enrichment
+    # passes so no secondary picker surface can bypass the policy.
+    from hermes_cli.model_switch import _apply_picker_allowlist
+    rows = _apply_picker_allowlist(rows, ctx.picker_allowlist)
 
     return {
         "providers": rows,

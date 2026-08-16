@@ -2599,6 +2599,10 @@ DEFAULT_CONFIG = {
         #     openrouter:
         #       url: https://example.com/my-curation.json
         "providers": {},
+        # Optional picker-only provider/model allowlist. Omitted means the
+        # normal unrestricted catalog; an explicit empty mapping hides all
+        # provider rows.
+        "picker_allowlist": None,
     },
 
     # Per-model metadata overrides — manually declare context_window,
